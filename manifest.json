@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Trade Calculator",
-  "version": "1.1.2",
+  "version": "1.2.0",
   "description": "Calculate entry, target, stop-loss, quantity, leverage & charges for NSE/BSE Intraday, Delivery & MTF trades.",
   "action": {
     "default_popup": "popup.html",
