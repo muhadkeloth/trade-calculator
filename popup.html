@@ -3,48 +3,51 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Trade Tracker</title>
+<title>Trade Calculator</title>
 <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
 <div class="tile">
-  <header class="brand">
-    <img src="icons/icon48.png" alt="Trade Tracker logo" class="logo" />
+  <header class="brand compact">
+    <img src="icons/icon48.png" alt="Trade Calculator logo" class="logo sm" />
     <div class="brandtxt">
-      <h1>Trade Tracker</h1>
+      <h1>Trade Calculator</h1>
       <p class="sub">Profit / loss · leverage · brokerage &amp; charges</p>
     </div>
-    <nav class="tabs">
-      <button class="tab active" data-tab="calc">Calc</button>
-      <button class="tab" data-tab="settings">Settings</button>
-      <button class="tab" data-tab="history">Track</button>
-    </nav>
+    <div class="menu-wrap">
+      <button id="menuBtn" class="icon-btn" title="Menu" aria-label="Menu">⋮</button>
+      <nav class="menu" id="mainMenu">
+        <button class="tab active" data-tab="calc">🧮 Calc</button>
+        <button class="tab" data-tab="settings">⚙️ Settings</button>
+        <button class="tab" data-tab="history">📊 Track</button>
+      </nav>
+    </div>
   </header>
 
   <!-- CALCULATOR -->
   <section id="tab-calc" class="tabpage active">
-    <div class="panel">
-      <div class="fld-label">Position</div>
-      <div class="seg" id="sideSeg" role="group" aria-label="Position side">
+    <div class="panel posline">
+      <span id="posSide" class="badge long">▲ Long</span>
+      <span class="sep">·</span>
+      <span id="posExch" class="badge">NSE</span>
+      <span class="sep">·</span>
+      <div class="seg switch" id="segSwitch" role="group" aria-label="Segment">
+        <button data-val="intraday" class="on">Intraday</button>
+        <button data-val="delivery">Delivery</button>
+      </div>
+      <!-- Legacy controls kept hidden for state compat -->
+      <div class="seg hidden" id="sideSeg" role="group" aria-label="Position side">
         <button data-val="long" class="on">▲ Long</button>
         <button data-val="short">▼ Short</button>
       </div>
-      <div class="grid2">
-        <div>
-          <div class="fld-label">Exchange</div>
-          <div class="seg" id="exchSeg">
-            <button data-val="NSE" class="on">NSE</button>
-            <button data-val="BSE">BSE</button>
-          </div>
-        </div>
-        <div>
-          <div class="fld-label">Segment</div>
-          <div class="seg three" id="segSeg">
-            <button data-val="intraday" class="on">Intraday</button>
-            <button data-val="delivery">Delivery</button>
-            <button data-val="mtf">MTF</button>
-          </div>
-        </div>
+      <div class="seg hidden" id="exchSeg">
+        <button data-val="NSE" class="on">NSE</button>
+        <button data-val="BSE">BSE</button>
+      </div>
+      <div class="seg three hidden" id="segSeg">
+        <button data-val="intraday" class="on">Intraday</button>
+        <button data-val="delivery">Delivery</button>
+        <button data-val="mtf">MTF</button>
       </div>
     </div>
 
@@ -71,20 +74,20 @@
           </div>
         </label>
       </div>
-      <p class="hint">Tip: tap <b>₹ / %</b> to enter target &amp; SL as price or % away from entry. Results update live.</p>
-      <div class="levrow">
-        <label class="check"><input id="levOn" type="checkbox" checked /> Use leverage <span class="pill" id="levAuto">auto for Intraday</span></label>
-        <label class="levmult"><input id="levMult" type="number" min="1" step="any" value="5" /> x</label>
-      </div>
-      <div class="levrow">
-        <label class="check"><input id="capOn" type="checkbox" checked /> Use capital <span class="pill" id="capPill">₹ 10,000</span></label>
-        <span class="hint" id="capHint" style="margin:0">auto qty</span>
+      <div class="grid2">
+        <div class="levrow">
+          <label class="check"><input id="levOn" type="checkbox" checked /> Use leverage</label>
+          <label class="levmult"><input id="levMult" type="number" min="1" step="any" value="5" /> x</label>
+        </div>
+        <div class="levrow">
+          <label class="check"><input id="capOn" type="checkbox" checked /> Use capital <span class="pill" id="capPill">₹ 10,000</span></label>
+          <span class="hint" id="capHint" style="margin:0">auto qty</span>
+        </div>
       </div>
       <div class="crow">
-        <button id="calcBtn" class="primary">Calculate</button>
+        <button id="calcBtn" class="primary" title="Save this calculation to history">Save</button>
         <button id="clearBtn" class="ghost" title="Reset entry, quantity, target & stop-loss to empty">Reset</button>
       </div>
-      <label class="check small"><input id="autosave" type="checkbox" checked /> Track this in history</label>
     </div>
 
     <div id="emptyState" class="empty">
@@ -94,7 +97,10 @@
     </div>
 
     <div id="results" class="hidden">
-      <div id="verdict" class="verdict">—</div>
+      <div id="verdict" class="verdict2">
+        <div class="vtile win" id="vWinTile"><span>Win</span><b id="vWin">—</b></div>
+        <div class="vtile lose" id="vLoseTile"><span>Lose</span><b id="vLose">—</b></div>
+      </div>
 
       <div class="strip3">
         <div class="stat"><span>Margin needed</span><b id="rMargin">—</b></div>
@@ -133,6 +139,21 @@
   <!-- SETTINGS -->
   <section id="tab-settings" class="tabpage">
     <p class="hint">Brokerage &amp; charges live here. Saved automatically in this browser.</p>
+    <h3>Defaults</h3>
+    <div class="grid2">
+      <label class="fld">Position
+        <select id="s_side">
+          <option value="long">Long</option>
+          <option value="short">Short</option>
+        </select>
+      </label>
+      <label class="fld">Exchange
+        <select id="s_exchange">
+          <option value="NSE">NSE</option>
+          <option value="BSE">BSE</option>
+        </select>
+      </label>
+    </div>
     <h3>Capital</h3>
     <div class="grid2">
       <label class="fld">Capital (₹)<input id="s_capital" type="number" min="0" step="any" /></label>
