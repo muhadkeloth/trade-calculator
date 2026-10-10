@@ -1,4 +1,4 @@
-/* Trade Tracker popup. Depends on calculator.js globals. */
+/* Trade Calculator popup. Depends on calculator.js globals. */
 (function () {
   const $ = (id) => document.getElementById(id);
   // Safe setters — never throw if an id is missing from popup.html
@@ -9,7 +9,7 @@
   const fmtPct = (n) => Number(n || 0).toFixed(2) + '%';
   const fmtSignedPlain = (n) => (n >= 0 ? '+' : '') + fmtRs(n);
 
-  const state = { side: 'long', exchange: 'NSE', segment: 'intraday', targetMode: 'price', slMode: 'price', settings: null };
+  const state = { side: 'long', exchange: 'NSE', segment: 'intraday', targetMode: 'price', slMode: 'price', settings: null, levPref: { intraday: null, delivery: null } };
   let saveTimer = null, calcTimer = null;
 
   function setSegUI(id, val) {
@@ -18,7 +18,7 @@
   }
 
   function segWire(id, key, onChange) {
-    const el = $(id);
+    const el = $(id); if (!el) return;
     el.querySelectorAll('button').forEach((b) => {
       b.addEventListener('click', () => {
         el.querySelectorAll('button').forEach((x) => x.classList.remove('on'));
@@ -26,15 +26,35 @@
         const raw = b.dataset.val;
         state[key] = (raw === 'NSE' || raw === 'BSE') ? raw.toUpperCase() : raw.toLowerCase();
         if (onChange) onChange();
+        refreshPositionStrip(); syncSegSwitch();
         persistFormSoon(); liveCalcSoon();
       });
     });
   }
 
+  function syncSegSwitch() {
+    const el = $('segSwitch'); if (!el) return;
+    el.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x.dataset.val.toLowerCase() === String(state.segment).toLowerCase()));
+  }
+
+  function refreshPositionStrip() {
+    const sideEl = $('posSide');
+    if (sideEl) {
+      const isShort = String(state.side).toLowerCase() === 'short';
+      sideEl.textContent = isShort ? '▼ Short' : '▲ Long';
+      sideEl.className = 'badge ' + (isShort ? 'short' : 'long');
+    }
+    const exEl = $('posExch');
+    if (exEl) exEl.textContent = (state.exchange || 'NSE').toUpperCase();
+    syncSegSwitch();
+  }
+
   function applyLeverageRule() {
-    // Default: leverage ON for Intraday/MTF, OFF for Delivery
-    if (state.segment === 'delivery') $('levOn').checked = false;
-    else $('levOn').checked = true;
+    // Default: leverage ON for Intraday, OFF for Delivery — but never override
+    // the user's own manual choice for that segment (recorded on checkbox toggle).
+    const pref = state.levPref ? state.levPref[state.segment] : null;
+    if (pref === true || pref === false) $('levOn').checked = pref;
+    else $('levOn').checked = state.segment !== 'delivery';
     if (typeof autoSizeQtyFromCapital === 'function') autoSizeQtyFromCapital();
     persistFormSoon();
   }
@@ -42,6 +62,30 @@
   segWire('sideSeg', 'side');
   segWire('exchSeg', 'exchange');
   segWire('segSeg', 'segment', applyLeverageRule);
+
+  // Visible Intraday/Delivery switch (MTF removed from calc view). Mirrors hidden segSeg.
+  (function wireSegSwitch() {
+    const el = $('segSwitch'); if (!el) return;
+    el.querySelectorAll('button').forEach((b) => {
+      b.addEventListener('click', () => {
+        state.segment = b.dataset.val.toLowerCase();
+        setSegUI('segSeg', state.segment);
+        syncSegSwitch();
+        applyLeverageRule();
+        persistFormSoon(); liveCalcSoon();
+      });
+    });
+  })();
+
+  // 3-dot menu open/close
+  (function wireMenu() {
+    const btn = $('menuBtn'), menu = $('mainMenu');
+    if (!btn || !menu) return;
+    btn.addEventListener('click', (e) => { e.stopPropagation(); menu.classList.toggle('open'); });
+    document.addEventListener('click', (e) => {
+      if (menu.classList.contains('open') && !menu.contains(e.target) && e.target !== btn) menu.classList.remove('open');
+    });
+  })();
 
   function modeWire(btnId, labelId, key) {
     $(btnId).addEventListener('click', () => {
@@ -60,6 +104,7 @@
       document.querySelectorAll('.tabpage').forEach((x) => x.classList.remove('active'));
       t.classList.add('active');
       $('tab-' + t.dataset.tab).classList.add('active');
+      const menu = $('mainMenu'); if (menu) menu.classList.remove('open');
       if (t.dataset.tab === 'history') renderHistory();
     });
   });
@@ -74,7 +119,7 @@
       targetVal: $('targetVal').value, slVal: $('slVal').value,
       levOn: $('levOn').checked, levMult: $('levMult').value,
       capOn: $('capOn') ? $('capOn').checked : false,
-      autosave: $('autosave').checked
+      levPref: state.levPref ? { intraday: state.levPref.intraday ?? null, delivery: state.levPref.delivery ?? null } : null
     };
   }
 
@@ -82,6 +127,7 @@
     if (!f) return;
     state.side = f.side || 'long'; state.exchange = f.exchange || 'NSE';
     state.segment = f.segment || 'intraday';
+    if (String(state.segment).toLowerCase() === 'mtf') state.segment = 'intraday'; // MTF removed from calc view
     state.targetMode = f.targetMode || 'price'; state.slMode = f.slMode || 'price';
     setSegUI('sideSeg', state.side); setSegUI('exchSeg', state.exchange); setSegUI('segSeg', state.segment);
     const ts = state.targetMode === 'price' ? '₹' : '%';
@@ -92,10 +138,11 @@
     $('targetVal').value = f.targetVal ?? ''; $('slVal').value = f.slVal ?? '';
     if (typeof f.levOn === 'boolean') $('levOn').checked = f.levOn;
     else $('levOn').checked = state.segment !== 'delivery';
+    if (f.levPref) state.levPref = { intraday: f.levPref.intraday ?? null, delivery: f.levPref.delivery ?? null };
     $('levMult').value = f.levMult || getSettings().leverageMultiplier || 5;
     if ($('capOn')) $('capOn').checked = f.capOn !== false;
-    $('autosave').checked = f.autosave !== false;
     refreshCapitalUI();
+    refreshPositionStrip();
   }
 
   function getCapital() {
@@ -147,9 +194,20 @@
   });
   $('entry').addEventListener('input', () => { autoSizeQtyFromCapital(); persistFormSoon(); liveCalcSoon(); });
   $('levMult').addEventListener('input', () => { autoSizeQtyFromCapital(); persistFormSoon(); liveCalcSoon(); });
-  ['levOn', 'autosave'].forEach((id) => $(id).addEventListener('change', persistFormSoon));
-  if ($('levOn')) $('levOn').addEventListener('change', () => { autoSizeQtyFromCapital(); liveCalcSoon(); });
+  ['levOn'].forEach((id) => $(id).addEventListener('change', persistFormSoon));
+  if ($('levOn')) $('levOn').addEventListener('change', () => {
+    // Remember the user's manual choice for this segment so switching
+    // Intraday <-> Delivery and back doesn't force it back on/off.
+    if (!state.levPref) state.levPref = { intraday: null, delivery: null };
+    state.levPref[state.segment] = $('levOn').checked;
+    autoSizeQtyFromCapital(); liveCalcSoon();
+  });
   if ($('capOn')) $('capOn').addEventListener('change', () => { autoSizeQtyFromCapital(); persistFormSoon(); liveCalcSoon(); });
+
+  // Auto-select current value on focus so typing replaces it (e.g. 44.34 -> type -> new value).
+  document.querySelectorAll('input[type="number"], input[type="text"]').forEach((el) => {
+    el.addEventListener('focus', () => { try { el.select(); } catch (e) { /* noop */ } });
+  });
 
   function liveCalcSoon() {
     clearTimeout(calcTimer);
@@ -160,10 +218,19 @@
     chrome.storage.local.get(['settings', 'form'], (res) => {
       state.settings = Object.assign({}, DEFAULT_SETTINGS, res.settings || {});
       if (!Number.isFinite(parseFloat(state.settings.capital))) state.settings.capital = 10000;
+      if (!state.settings.side) state.settings.side = 'long';
+      if (!state.settings.exchange) state.settings.exchange = 'NSE';
       fillSettingsForm();
       refreshCapitalUI();
       if (res.form) restoreForm(res.form);
-      else { $('levOn').checked = true; $('levMult').value = state.settings.leverageMultiplier; if ($('capOn')) $('capOn').checked = true; refreshCapitalUI(); }
+      else {
+        state.side = (state.settings.side || 'long').toLowerCase();
+        state.exchange = (state.settings.exchange || 'NSE').toUpperCase();
+        state.segment = 'intraday';
+        setSegUI('sideSeg', state.side); setSegUI('exchSeg', state.exchange); setSegUI('segSeg', state.segment);
+        $('levOn').checked = true; $('levMult').value = state.settings.leverageMultiplier; if ($('capOn')) $('capOn').checked = true; refreshCapitalUI();
+        refreshPositionStrip();
+      }
       // live-restore last result if inputs valid
       tryCalculate(false);
     });
@@ -185,19 +252,31 @@
   function fillSettingsForm() {
     MAP.forEach(([id, k]) => { const el = $(id); if (el) el.value = state.settings[k]; });
     const levDef = $('s_levOn'); if (levDef) levDef.checked = !!state.settings.leverageEnabled;
+    const sideSel = $('s_side'); if (sideSel) sideSel.value = (state.settings.side || 'long').toLowerCase();
+    const exchSel = $('s_exchange'); if (exchSel) exchSel.value = (state.settings.exchange || 'NSE').toUpperCase();
   }
   $('saveSettings').addEventListener('click', () => {
     const s = Object.assign({}, state.settings);
     MAP.forEach(([id, k]) => { const v = parseFloat($(id).value); if (Number.isFinite(v)) s[k] = v; });
     if (!(s.capital > 0)) s.capital = 10000;
     s.leverageEnabled = $('s_levOn').checked;
+    const sideSel = $('s_side'); if (sideSel) s.side = sideSel.value.toLowerCase() === 'short' ? 'short' : 'long';
+    const exchSel = $('s_exchange'); if (exchSel) s.exchange = String(exchSel.value).toUpperCase() === 'BSE' ? 'BSE' : 'NSE';
     state.settings = s;
+    state.side = s.side || state.side; state.exchange = s.exchange || state.exchange;
+    setSegUI('sideSeg', state.side); setSegUI('exchSeg', state.exchange);
+    refreshPositionStrip();
     chrome.storage.local.set({ settings: s }, () => { $('settingsMsg').textContent = 'Saved ✓'; setTimeout(() => $('settingsMsg').textContent = '', 1500); });
     refreshCapitalUI();
     autoSizeQtyFromCapital();
+    persistFormSoon(); liveCalcSoon();
   });
   $('resetSettings').addEventListener('click', () => {
     state.settings = Object.assign({}, DEFAULT_SETTINGS);
+    state.settings.side = 'long'; state.settings.exchange = 'NSE';
+    state.side = 'long'; state.exchange = 'NSE';
+    setSegUI('sideSeg', state.side); setSegUI('exchSeg', state.exchange);
+    refreshPositionStrip();
     chrome.storage.local.set({ settings: state.settings }, () => { fillSettingsForm(); refreshCapitalUI(); });
   });
 
@@ -240,7 +319,7 @@
     let out;
     try { out = calculateScenario(input); } catch (e) { return null; }
     renderResult(input, out, { showTarget: Number.isFinite(tv), showSL: Number.isFinite(sv) });
-    if (save && $('autosave').checked) saveHistory({ input, targetNet: out.target.net, slNet: out.sl.net, ts: Date.now() });
+    if (save) saveHistory({ input, targetNet: out.target.net, slNet: out.sl.net, ts: Date.now() });
     chrome.storage.local.set({ lastResult: { input, ts: Date.now() } });
     return { input, out };
   }
@@ -275,19 +354,16 @@
     setText('rMarginPct', vis.showTarget ? fmtPct(t.returnOnMarginPct) : dash);
     setText('rBreakeven', fmtRs(t.breakeven));
 
-    const v = $('verdict');
-    if (v) {
-    if (vis.showTarget && vis.showSL) {
-      v.className = 'verdict ' + (t.net >= 0 ? 'good' : 'bad');
-      v.innerHTML = `Win <b>${fmtSignedPlain(t.net)}</b> &nbsp;·&nbsp; Lose <b>${fmtSignedPlain(s.net)}</b> &nbsp;·&nbsp; R:R <b>1 : ${(risk > 0 ? (reward / risk).toFixed(2) : '—')}</b>`;
-    } else if (vis.showTarget) {
-      v.className = 'verdict ' + (t.net >= 0 ? 'good' : 'bad');
-      v.innerHTML = `Target nets <b>${fmtSignedPlain(t.net)}</b> after ${fmtRs(t.totalCharges)} charges`;
-    } else {
-      v.className = 'verdict ' + (s.net >= 0 ? 'good' : 'bad');
-      v.innerHTML = `SL nets <b>${fmtSignedPlain(s.net)}</b> after ${fmtRs(s.totalCharges)} charges`;
-    }
-    }
+    // Win / Lose tiles — each green when positive, red when negative.
+    // (Risk : Reward lives in its own stat tile, so it's not repeated here.)
+    (function renderVerdictTiles() {
+      const tiles = [['vWinTile', 'vWin', t.net, vis.showTarget], ['vLoseTile', 'vLose', s.net, vis.showSL]];
+      tiles.forEach(([tileId, valId, val, show]) => {
+        const tile = $(tileId); if (!tile) return;
+        setText(valId, show ? fmtSignedPlain(val) : dash);
+        tile.className = 'vtile ' + (!show ? 'neut' : (val >= 0 ? 'good' : 'bad'));
+      });
+    })();
 
     setHTML('breakT', breakupHtml(t)); setHTML('breakS', breakupHtml(s));
   }
@@ -311,7 +387,7 @@
   function renderHistory() {
     chrome.storage.local.get(['history'], (res) => {
       const h = res.history || []; const box = $('histList'); box.innerHTML = '';
-      if (!h.length) { box.innerHTML = '<p class="hint">No tracked trades yet. Run a calculation with “Track” checked.</p>'; return; }
+      if (!h.length) { box.innerHTML = '<p class="hint">No tracked trades yet. Hit “Save” to track the current calculation.</p>'; return; }
       h.forEach((r, i) => {
         const d = document.createElement('div'); d.className = 'hist';
         const dt = new Date(r.ts).toLocaleString();
@@ -336,13 +412,17 @@
           $('entry').value = inp.entry ?? ''; $('qty').value = inp.qty ?? '';
           $('targetVal').value = inp.targetValue ?? ''; $('slVal').value = inp.slValue ?? '';
           state.side = inp.side || 'long'; state.exchange = inp.exchange || 'NSE'; state.segment = inp.segment || 'intraday';
+          if (String(state.segment).toLowerCase() === 'mtf') state.segment = 'intraday';
           state.targetMode = inp.targetMode || 'price'; state.slMode = inp.slMode || 'price';
           setSegUI('sideSeg', state.side); setSegUI('exchSeg', state.exchange); setSegUI('segSeg', state.segment);
+          refreshPositionStrip();
           $('targetMode').textContent = state.targetMode === 'price' ? '₹' : '%';
           $('targetModeLabel').textContent = $('targetMode').textContent;
           $('slMode').textContent = state.slMode === 'price' ? '₹' : '%';
           $('slModeLabel').textContent = $('slMode').textContent;
           $('levOn').checked = !!inp.leverageOn; $('levMult').value = inp.leverageMultiplier || 5;
+          if (!state.levPref) state.levPref = { intraday: null, delivery: null };
+          state.levPref[state.segment] = !!inp.leverageOn;
           persistFormSoon(); tryCalculate(false);
           document.querySelector('.tab[data-tab="calc"]').click();
         });
