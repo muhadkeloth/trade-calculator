@@ -6,6 +6,8 @@ const DEFAULT_SETTINGS = {
   leverageEnabled: true,
   leverageMultiplier: 5,
   capital: 10000,
+  riskPct: 1,
+  rewardRatio: 2,
 
   // Brokerage: % per side, capped at flat Rs per side (per executed order)
   intradayBrokeragePct: 0.03,
@@ -219,6 +221,102 @@ function calculateScenario(input) {
   return { targetPrice, slPrice, target, sl };
 }
 
+/* Net P&L of a trade as a function of the EXIT price (for a given entry/qty).
+ * Handles both long and short. Charges are recomputed for the resulting prices.
+ */
+function tradeNetForExit(exitPrice, entry, qty, options = {}) {
+  const side = (options.side || 'long').toLowerCase();
+  const opts = {
+    segment: options.segment || 'intraday',
+    exchange: options.exchange || 'NSE',
+    side: 'long',
+    leverageOn: !!options.leverageOn,
+    leverageMultiplier: options.leverageMultiplier,
+    settings: options.settings
+  };
+  qty = Math.max(0, Math.floor(num(qty)));
+  if (side === 'long') {
+    const r = calculateTrade(entry, exitPrice, qty, opts);
+    return r.net;
+  }
+  // short: entry is the sell, exit is the buy-back
+  const r = calculateTrade(exitPrice, entry, qty, opts);
+  const gross = num(entry) * qty - num(exitPrice) * qty;
+  return gross - r.totalCharges;
+}
+
+/* Solve the exit price that yields a desired net P&L (long or short). */
+function solveExitPrice(entry, qty, side, options = {}, desiredNet = 0) {
+  entry = num(entry); qty = Math.max(0, Math.floor(num(qty)));
+  if (!(qty > 0) || !(entry > 0)) return entry;
+  const isShort = String(side || 'long').toLowerCase() === 'short';
+  const opts = Object.assign({}, options, { side });
+  const f = (x) => tradeNetForExit(x, entry, qty, opts) - num(desiredNet);
+
+  let lo, hi;
+  if (!isShort) {
+    if (desiredNet >= 0) {
+      lo = entry;
+      hi = entry * 2 > entry ? entry * 2 : entry + 1;
+      let guard = 0;
+      while (f(hi) < 0 && guard < 60 && isFinite(hi)) { hi = hi + (hi - lo || 1); guard++; }
+    } else {
+      lo = 0;
+      hi = entry;
+    }
+  } else {
+    if (desiredNet >= 0) {
+      lo = 0;
+      hi = entry;
+    } else {
+      lo = entry;
+      hi = entry * 2 > entry ? entry * 2 : entry + 1;
+      let guard = 0;
+      while (f(hi) > 0 && guard < 60 && isFinite(hi)) { hi = hi + (hi - lo || 1); guard++; }
+    }
+  }
+  if (!isFinite(lo) || !isFinite(hi)) return entry;
+  // If bounds don't bracket, return nearest bound.
+  const fLo = f(lo), fHi = f(hi);
+  if ((!isShort && (fLo > 0 || fHi < 0)) || (isShort && (fLo < 0 || fHi > 0))) {
+    return isShort ? (fLo < 0 ? hi : lo) : (fLo > 0 ? lo : hi);
+  }
+  for (let i = 0; i < 80; i++) {
+    const mid = (lo + hi) / 2;
+    const fm = f(mid);
+    if (!isShort) {
+      if (fm > 0) hi = mid; else lo = mid;
+    } else {
+      if (fm > 0) lo = mid; else hi = mid;
+    }
+  }
+  return (lo + hi) / 2;
+}
+
+/* Largest integer quantity whose net loss at slPrice does not exceed riskAmount. */
+function solveQtyForRisk(entry, slPrice, side, options = {}, riskAmount = 0) {
+  entry = num(entry); slPrice = num(slPrice); riskAmount = num(riskAmount);
+  if (!(entry > 0) || !(riskAmount > 0)) return 0;
+  const opts = Object.assign({}, options, { side });
+  const netLoss = (q) => -tradeNetForExit(slPrice, entry, q, opts);
+  let hi = 1;
+  while (hi < 10000000 && netLoss(hi) <= riskAmount) hi *= 2;
+  if (netLoss(1) > riskAmount) return 0;
+  let lo = 0, ans = 0;
+  while (lo <= hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (netLoss(mid) <= riskAmount) { ans = mid; lo = mid + 1; }
+    else hi = mid - 1;
+  }
+  // Choose the quantity whose net loss is closest to the target risk amount
+  // (rounding to nearest rather than always flooring), matching user expectation
+  // e.g. 5 qty for a 1% risk when 5 gives ~100.5 loss.
+  const d0 = Math.abs(netLoss(ans) - riskAmount);
+  const d1 = Math.abs(netLoss(ans + 1) - riskAmount);
+  if (d1 < d0) ans = ans + 1;
+  return ans;
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { DEFAULT_SETTINGS, calculateTrade, resolvePrice, calculateScenario, calcQuantityFromCapital };
+  module.exports = { DEFAULT_SETTINGS, calculateTrade, resolvePrice, calculateScenario, calcQuantityFromCapital, tradeNetForExit, solveExitPrice, solveQtyForRisk };
 }

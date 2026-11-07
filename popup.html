@@ -85,6 +85,7 @@
         </div>
       </div>
       <div class="crow">
+        <button id="alignBtn" class="ghost" title="Auto-align qty, SL & target from entry / SL">⟳ Align</button>
         <button id="calcBtn" class="primary" title="Save this calculation to history">Save</button>
         <button id="clearBtn" class="ghost" title="Reset entry, quantity, target & stop-loss to empty">Reset</button>
       </div>
@@ -162,6 +163,11 @@
     <div class="grid2">
       <label class="fld">Default leverage (x)<input id="s_levMult" type="number" step="any" /></label>
       <label class="check">Enable by default<input id="s_levOn" type="checkbox" /></label>
+    </div>
+    <h3>Risk &amp; reward (auto modes)</h3>
+    <div class="grid2">
+      <label class="fld">Risk % of capital (loose)<input id="s_riskPct" type="number" step="any" /></label>
+      <label class="fld">Reward ratio (1 : x)<input id="s_rewardRatio" type="number" step="any" /></label>
     </div>
     <h3>Brokerage (% per side, cap ₹ per side)</h3>
     <div class="grid2">
