@@ -9,7 +9,7 @@
   const fmtPct = (n) => Number(n || 0).toFixed(2) + '%';
   const fmtSignedPlain = (n) => (n >= 0 ? '+' : '') + fmtRs(n);
 
-  const state = { side: 'long', exchange: 'NSE', segment: 'intraday', targetMode: 'price', slMode: 'price', settings: null, levPref: { intraday: null, delivery: null } };
+  const state = { side: 'long', exchange: 'NSE', segment: 'intraday', targetMode: 'price', slMode: 'price', settings: null, levPref: { intraday: null, delivery: null }, calcMode: 'manual' };
   let saveTimer = null, calcTimer = null;
 
   function setSegUI(id, val) {
@@ -55,7 +55,7 @@
     const pref = state.levPref ? state.levPref[state.segment] : null;
     if (pref === true || pref === false) $('levOn').checked = pref;
     else $('levOn').checked = state.segment !== 'delivery';
-    if (typeof autoSizeQtyFromCapital === 'function') autoSizeQtyFromCapital();
+    // no auto field updates; user controls via Align button
     persistFormSoon();
   }
 
@@ -98,6 +98,13 @@
   modeWire('targetMode', 'targetModeLabel', 'targetMode');
   modeWire('slMode', 'slModeLabel', 'slMode');
 
+  const alignBtn = $('alignBtn');
+  if (alignBtn) alignBtn.addEventListener('click', () => {
+    autoAlign();
+    persistFormSoon();
+    liveCalcSoon();
+  });
+
   document.querySelectorAll('.tab').forEach((t) => {
     t.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach((x) => x.classList.remove('active'));
@@ -114,7 +121,7 @@
   function collectForm() {
     return {
       side: state.side, exchange: state.exchange, segment: state.segment,
-      targetMode: state.targetMode, slMode: state.slMode,
+      targetMode: state.targetMode, slMode: state.slMode, calcMode: state.calcMode,
       entry: $('entry').value, qty: $('qty').value,
       targetVal: $('targetVal').value, slVal: $('slVal').value,
       levOn: $('levOn').checked, levMult: $('levMult').value,
@@ -129,7 +136,7 @@
     state.segment = f.segment || 'intraday';
     if (String(state.segment).toLowerCase() === 'mtf') state.segment = 'intraday'; // MTF removed from calc view
     state.targetMode = f.targetMode || 'price'; state.slMode = f.slMode || 'price';
-    setSegUI('sideSeg', state.side); setSegUI('exchSeg', state.exchange); setSegUI('segSeg', state.segment);
+     setSegUI('sideSeg', state.side); setSegUI('exchSeg', state.exchange); setSegUI('segSeg', state.segment);
     const ts = state.targetMode === 'price' ? '₹' : '%';
     const ss = state.slMode === 'price' ? '₹' : '%';
     $('targetMode').textContent = ts; $('targetModeLabel').textContent = ts;
@@ -184,25 +191,86 @@
     updateCapHint();
   }
 
+  function getRiskPct() { return (parseFloat(getSettings().riskPct) || 1); }
+  function getRewardRatio() { return (parseFloat(getSettings().rewardRatio) || 2); }
+
+  function autoAlign() {
+    const entry = parseFloat($('entry').value);
+    if (!(entry > 0)) return;
+    const settings = getSettings();
+    const capital = getCapital();
+    const riskPct = getRiskPct();
+    const ratio = getRewardRatio();
+    const riskAmount = capital * riskPct / 100;
+    const side = state.side;
+    const levOn = $('levOn').checked;
+    const levMult = parseFloat($('levMult').value) || 5;
+    const opts = { segment: state.segment, exchange: state.exchange, side: side, leverageOn: levOn, leverageMultiplier: levMult, settings: settings };
+    const slInput = parseFloat($('slVal').value);
+    const useSl = slInput > 0;
+    if (!useSl) {
+      const qty = (typeof calcQuantityFromCapital === 'function') ? calcQuantityFromCapital(capital, entry, levOn, levMult) : 0;
+      if (!(qty > 0)) return;
+      $('qty').value = qty;
+      let slPrice = entry;
+      if (typeof solveExitPrice === 'function') slPrice = solveExitPrice(entry, qty, side, opts, -riskAmount);
+      let targetPrice = entry;
+      if (typeof solveExitPrice === 'function') targetPrice = solveExitPrice(entry, qty, side, opts, riskAmount * ratio);
+      state.targetMode = 'price'; state.slMode = 'price';
+      const ts = '₹', ss = '₹';
+      if ($('targetMode')) $('targetMode').textContent = ts;
+      if ($('targetModeLabel')) $('targetModeLabel').textContent = ts;
+      if ($('slMode')) $('slMode').textContent = ss;
+      if ($('slModeLabel')) $('slModeLabel').textContent = ss;
+      $('targetVal').value = targetPrice;
+      $('slVal').value = slPrice;
+    } else {
+      const slPrice = parseFloat($('slVal').value);
+      if (!(slPrice > 0)) return;
+      let q = 0;
+      if (typeof solveQtyForRisk === 'function') {
+        q = solveQtyForRisk(entry, slPrice, side, opts, riskAmount);
+        if (q > 0) $('qty').value = q;
+      }
+      let targetPrice = entry;
+      if (typeof solveExitPrice === 'function' && q > 0) targetPrice = solveExitPrice(entry, q, side, opts, riskAmount * ratio);
+      state.targetMode = 'price';
+      const ts = '₹';
+      if ($('targetMode')) $('targetMode').textContent = ts;
+      if ($('targetModeLabel')) $('targetModeLabel').textContent = ts;
+      $('targetVal').value = targetPrice;
+    }
+  }
+
   function persistFormSoon() {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => chrome.storage.local.set({ form: collectForm() }), 250);
   }
 
   ['qty', 'targetVal', 'slVal'].forEach((id) => {
-    $(id).addEventListener('input', () => { persistFormSoon(); liveCalcSoon(); });
+    $(id).addEventListener('input', () => {
+      persistFormSoon(); liveCalcSoon();
+    });
   });
-  $('entry').addEventListener('input', () => { autoSizeQtyFromCapital(); persistFormSoon(); liveCalcSoon(); });
-  $('levMult').addEventListener('input', () => { autoSizeQtyFromCapital(); persistFormSoon(); liveCalcSoon(); });
-  ['levOn'].forEach((id) => $(id).addEventListener('change', persistFormSoon));
+  $('entry').addEventListener('input', () => {
+    persistFormSoon(); liveCalcSoon();
+  });
+  $('levMult').addEventListener('input', () => {
+    persistFormSoon(); liveCalcSoon();
+  });
   if ($('levOn')) $('levOn').addEventListener('change', () => {
     // Remember the user's manual choice for this segment so switching
     // Intraday <-> Delivery and back doesn't force it back on/off.
     if (!state.levPref) state.levPref = { intraday: null, delivery: null };
     state.levPref[state.segment] = $('levOn').checked;
-    autoSizeQtyFromCapital(); liveCalcSoon();
+    if (state.calcMode && state.calcMode !== 'manual') deriveForMode();
+    else autoSizeQtyFromCapital();
+    persistFormSoon(); liveCalcSoon();
   });
-  if ($('capOn')) $('capOn').addEventListener('change', () => { autoSizeQtyFromCapital(); persistFormSoon(); liveCalcSoon(); });
+  if ($('capOn')) $('capOn').addEventListener('change', () => {
+    updateCapHint();
+    persistFormSoon(); liveCalcSoon();
+  });
 
   // Auto-select current value on focus so typing replaces it (e.g. 44.34 -> type -> new value).
   document.querySelectorAll('input[type="number"], input[type="text"]').forEach((el) => {
@@ -228,16 +296,20 @@
         state.exchange = (state.settings.exchange || 'NSE').toUpperCase();
         state.segment = 'intraday';
         setSegUI('sideSeg', state.side); setSegUI('exchSeg', state.exchange); setSegUI('segSeg', state.segment);
+        state.calcMode = 'manual';
+        if ($('calcMode')) $('calcMode').value = 'manual';
         $('levOn').checked = true; $('levMult').value = state.settings.leverageMultiplier; if ($('capOn')) $('capOn').checked = true; refreshCapitalUI();
+        updateModeInputState();
         refreshPositionStrip();
       }
+      if (state.calcMode && state.calcMode !== 'manual') deriveForMode();
       // live-restore last result if inputs valid
       tryCalculate(false);
     });
   }
 
   const MAP = [
-    ['s_capital', 'capital'], ['s_levMult', 'leverageMultiplier'], ['s_intraPct', 'intradayBrokeragePct'],
+    ['s_capital', 'capital'], ['s_levMult', 'leverageMultiplier'], ['s_riskPct', 'riskPct'], ['s_rewardRatio', 'rewardRatio'], ['s_intraPct', 'intradayBrokeragePct'],
     ['s_intraFlat', 'intradayBrokerageFlat'], ['s_delPct', 'deliveryBrokeragePct'],
     ['s_delFlat', 'deliveryBrokerageFlat'], ['s_mtfPct', 'mtfBrokeragePct'],
     ['s_mtfFlat', 'mtfBrokerageFlat'], ['s_nseIntra', 'exchNseIntraday'],
@@ -268,7 +340,8 @@
     refreshPositionStrip();
     chrome.storage.local.set({ settings: s }, () => { $('settingsMsg').textContent = 'Saved ✓'; setTimeout(() => $('settingsMsg').textContent = '', 1500); });
     refreshCapitalUI();
-    autoSizeQtyFromCapital();
+    if (state.calcMode && state.calcMode !== 'manual') deriveForMode();
+    else autoSizeQtyFromCapital();
     persistFormSoon(); liveCalcSoon();
   });
   $('resetSettings').addEventListener('click', () => {
